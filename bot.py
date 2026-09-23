@@ -29,7 +29,7 @@ def home():
     return "Mohammadi Fashion Bot is running."
 
 def web_server():
-port = int(os.getenv("PORT", "10000"))
+    port = int(os.getenv("PORT", "10000"))
 app_web.run(host="0.0.0.0", port=port)
 
 def db():
