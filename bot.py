@@ -2,14 +2,23 @@ import os
 import sqlite3
 import logging
 import threading
-from datetime import datetime, timedelta
-from functools import wraps
+from datetime import datetime
 
 from flask import Flask, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
 
 try:
@@ -17,12 +26,10 @@ try:
 except Exception:
     OpenAI = None
 
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    level=logging.INFO
-)
 
-log = logging.getLogger("Bitcoin1996Bot")
+# =========================================================
+# SETTINGS
+# =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
@@ -35,13 +42,11 @@ ADMIN_IDS = {
     if x.strip().isdigit()
 }
 
+PORT = int(os.getenv("PORT", "10000"))
+
 DB_PATH = os.getenv(
     "DB_PATH",
     "bitcoin1996.db"
-)
-
-PORT = int(
-    os.getenv("PORT", "10000")
 )
 
 OPENAI_API_KEY = os.getenv(
@@ -51,61 +56,74 @@ OPENAI_API_KEY = os.getenv(
 
 OPENAI_MODEL = os.getenv(
     "OPENAI_MODEL",
-    "gpt-5.6-luna"
+    "gpt-4o-mini"
 ).strip()
 
-HESABPAY_API_URL = os.getenv(
-    "HESABPAY_API_URL",
-    ""
-).strip()
 
-HESABPAY_API_KEY = os.getenv(
-    "HESABPAY_API_KEY",
-    ""
-).strip()
+# =========================================================
+# LOGGING
+# =========================================================
 
-HESABPAY_WEBHOOK_TOKEN = os.getenv(
-    "HESABPAY_WEBHOOK_TOKEN",
-    ""
-).strip()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+log = logging.getLogger("Bitcoin1996Bot")
+
+
+# =========================================================
+# FLASK
+# =========================================================
 
 app = Flask(__name__)
 
 db_lock = threading.Lock()
 
 
+# =========================================================
+# DATABASE
+# =========================================================
+
 def db():
     conn = sqlite3.connect(
         DB_PATH,
         check_same_thread=False
     )
+
     conn.row_factory = sqlite3.Row
+
     return conn
+
+
+def now():
+    return datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 def init_db():
 
     with db_lock:
 
-        c = db()
+        conn = db()
 
-        c.executescript("""
-
-        CREATE TABLE IF NOT EXISTS settings(
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS users(
+        CREATE TABLE IF NOT EXISTS users (
             tg_id INTEGER PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            phone TEXT,
+            username TEXT DEFAULT '',
+            first_name TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
             blocked INTEGER DEFAULT 0,
             created_at TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS orders(
+        CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tg_id INTEGER NOT NULL,
             side TEXT NOT NULL,
@@ -114,28 +132,19 @@ def init_db():
             total REAL NOT NULL,
             status TEXT NOT NULL,
             payment_status TEXT DEFAULT 'pending',
-            payment_ref TEXT,
-            note TEXT,
+            payment_ref TEXT DEFAULT '',
+            note TEXT DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS admin_logs(
+        CREATE TABLE IF NOT EXISTS admin_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             admin_id INTEGER,
             action TEXT,
             detail TEXT,
             created_at TEXT NOT NULL
         );
-
-        CREATE TABLE IF NOT EXISTS messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tg_id INTEGER,
-            direction TEXT,
-            text TEXT,
-            created_at TEXT NOT NULL
-        );
-
         """)
 
         defaults = {
@@ -143,68 +152,76 @@ def init_db():
             "sell_rate": "69",
             "maintenance": "0",
             "ai_enabled": "1",
-            "support": "@Rohullah1375"
+            "support": "@Rohullah1375",
         }
 
-        for k, v in defaults.items():
+        for key, value in defaults.items():
 
-            c.execute(
+            conn.execute(
                 """
-                INSERT OR IGNORE INTO settings(key,value)
-                VALUES(?,?)
+                INSERT OR IGNORE INTO settings
+                (key, value)
+                VALUES (?, ?)
                 """,
-                (k, v)
+                (key, value)
             )
 
-        c.commit()
-        c.close()
+        conn.commit()
+
+        conn.close()
 
 
-def now():
-
-    return datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
+# =========================================================
+# SETTINGS FUNCTIONS
+# =========================================================
 
 def setting(key):
 
-    c = db()
+    conn = db()
 
-    r = c.execute(
+    row = conn.execute(
         """
         SELECT value
         FROM settings
-        WHERE key=?
+        WHERE key = ?
         """,
         (key,)
     ).fetchone()
 
-    c.close()
+    conn.close()
 
-    return r["value"] if r else ""
+    if row:
+        return row["value"]
+
+    return ""
 
 
 def set_setting(key, value):
 
     with db_lock:
 
-        c = db()
+        conn = db()
 
-        c.execute(
+        conn.execute(
             """
-            INSERT INTO settings(key,value)
-            VALUES(?,?)
+            INSERT INTO settings
+            (key, value)
+            VALUES (?, ?)
 
             ON CONFLICT(key)
-            DO UPDATE SET value=excluded.value
+            DO UPDATE SET value = excluded.value
             """,
             (key, str(value))
         )
 
-        c.commit()
-        c.close()
+        conn.commit()
 
+        conn.close()
+
+
+# =========================================================
+# ADMIN LOG
+# =========================================================
 
 def log_admin(
     admin_id,
@@ -214,17 +231,18 @@ def log_admin(
 
     with db_lock:
 
-        c = db()
+        conn = db()
 
-        c.execute(
+        conn.execute(
             """
-            INSERT INTO admin_logs(
+            INSERT INTO admin_logs
+            (
                 admin_id,
                 action,
                 detail,
                 created_at
             )
-            VALUES(?,?,?,?)
+            VALUES (?, ?, ?, ?)
             """,
             (
                 admin_id,
@@ -234,106 +252,88 @@ def log_admin(
             )
         )
 
-        c.commit()
-        c.close()
+        conn.commit()
+
+        conn.close()
 
 
-def is_admin(uid):
+# =========================================================
+# HELPERS
+# =========================================================
 
-    return uid in ADMIN_IDS
+def money(value):
 
-
-def user_row(uid):
-
-    c = db()
-
-    r = c.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE tg_id=?
-        """,
-        (uid,)
-    ).fetchone()
-
-    c.close()
-
-    return r
+    return f"{float(value):,.2f}"
 
 
-def ensure_user(tg_user):
+def is_admin(user_id):
+
+    return user_id in ADMIN_IDS
+
+
+def ensure_user(user):
 
     with db_lock:
 
-        c = db()
+        conn = db()
 
-        r = c.execute(
+        conn.execute(
             """
-            SELECT tg_id
-            FROM users
-            WHERE tg_id=?
+            INSERT INTO users
+            (
+                tg_id,
+                username,
+                first_name,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+
+            ON CONFLICT(tg_id)
+            DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name
             """,
-            (tg_user.id,)
-        ).fetchone()
-
-        if not r:
-
-            c.execute(
-                """
-                INSERT INTO users(
-                    tg_id,
-                    username,
-                    first_name,
-                    created_at
-                )
-                VALUES(?,?,?,?)
-                """,
-                (
-                    tg_user.id,
-                    tg_user.username or "",
-                    tg_user.first_name or "",
-                    now()
-                )
+            (
+                user.id,
+                user.username or "",
+                user.first_name or "",
+                now()
             )
+        )
 
-        else:
+        conn.commit()
 
-            c.execute(
-                """
-                UPDATE users
-                SET username=?,
-                    first_name=?
-                WHERE tg_id=?
-                """,
-                (
-                    tg_user.username or "",
-                    tg_user.first_name or "",
-                    tg_user.id
-                )
-            )
-
-        c.commit()
-        c.close()
+        conn.close()
 
 
-def blocked(uid):
+def blocked(user_id):
 
-    r = user_row(uid)
+    conn = db()
 
-    return bool(
-        r and r["blocked"]
-    )
+    row = conn.execute(
+        """
+        SELECT blocked
+        FROM users
+        WHERE tg_id = ?
+        """,
+        (user_id,)
+    ).fetchone()
+
+    conn.close()
+
+    if not row:
+        return False
+
+    return bool(row["blocked"])
 
 
-def money(x):
-
-    return f"{x:,.2f}"
-
+# =========================================================
+# USER MENU
+# =========================================================
 
 def user_menu():
 
     return InlineKeyboardMarkup([
-
         [
             InlineKeyboardButton(
                 "🟢 خرید تتر",
@@ -342,7 +342,7 @@ def user_menu():
             InlineKeyboardButton(
                 "🔴 فروش تتر",
                 callback_data="sell"
-            )
+            ),
         ],
 
         [
@@ -353,7 +353,7 @@ def user_menu():
             InlineKeyboardButton(
                 "📦 سفارش‌های من",
                 callback_data="myorders"
-            )
+            ),
         ],
 
         [
@@ -364,7 +364,7 @@ def user_menu():
             InlineKeyboardButton(
                 "👤 پروفایل",
                 callback_data="profile"
-            )
+            ),
         ],
 
         [
@@ -375,16 +375,18 @@ def user_menu():
             InlineKeyboardButton(
                 "📞 پشتیبانی",
                 callback_data="support"
-            )
-        ]
-
+            ),
+        ],
     ])
 
+
+# =========================================================
+# ADMIN MENU
+# =========================================================
 
 def admin_menu():
 
     return InlineKeyboardMarkup([
-
         [
             InlineKeyboardButton(
                 "📊 داشبورد",
@@ -393,7 +395,7 @@ def admin_menu():
             InlineKeyboardButton(
                 "📦 سفارش‌ها",
                 callback_data="adm_orders"
-            )
+            ),
         ],
 
         [
@@ -402,9 +404,9 @@ def admin_menu():
                 callback_data="adm_users"
             ),
             InlineKeyboardButton(
-                "💵 نرخ خرید/فروش",
+                "💵 نرخ‌ها",
                 callback_data="adm_rates"
-            )
+            ),
         ],
 
         [
@@ -415,7 +417,7 @@ def admin_menu():
             InlineKeyboardButton(
                 "📈 گزارش‌ها",
                 callback_data="adm_reports"
-            )
+            ),
         ],
 
         [
@@ -426,7 +428,7 @@ def admin_menu():
             InlineKeyboardButton(
                 "🚫 مسدود/آزاد",
                 callback_data="adm_block"
-            )
+            ),
         ],
 
         [
@@ -437,68 +439,76 @@ def admin_menu():
             InlineKeyboardButton(
                 "🔐 لاگ امنیتی",
                 callback_data="adm_logs"
-            )
-        ]
-
+            ),
+        ],
     ])
 
+
+# =========================================================
+# NOTIFY ADMINS
+# =========================================================
 
 async def notify_admins(
     context,
     text
 ):
 
-    for aid in ADMIN_IDS:
+    for admin_id in ADMIN_IDS:
 
         try:
 
             await context.bot.send_message(
-                aid,
-                text
+                chat_id=admin_id,
+                text=text
             )
 
-        except Exception as e:
+        except Exception as exc:
 
             log.warning(
-                "admin notification failed: %s",
-                e
+                "Admin notification failed: %s",
+                exc
             )
 
+
+# =========================================================
+# START
+# =========================================================
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    u = update.effective_user
+    user = update.effective_user
 
-    ensure_user(u)
+    ensure_user(user)
 
-    if blocked(u.id):
+    if blocked(user.id):
 
         await update.message.reply_text(
-            "حساب شما توسط مدیریت مسدود شده است."
+            "🚫 حساب شما توسط مدیریت مسدود شده است."
         )
 
         return
 
     await update.message.reply_text(
-
         "💰 به ربات خرید و فروش تتر خوش آمدید.\n\n"
-
-        f"نرخ خرید: "
-        f"{money(float(setting('buy_rate')))}\n"
-
-        f"نرخ فروش: "
-        f"{money(float(setting('sell_rate')))}",
-
+        f"🟢 نرخ خرید: "
+        f"{money(setting('buy_rate'))}\n"
+        f"🔴 نرخ فروش: "
+        f"{money(setting('sell_rate'))}\n\n"
+        "لطفاً گزینه مورد نظر را انتخاب کنید:",
         reply_markup=user_menu()
     )
 
 
+# =========================================================
+# ADMIN COMMAND
+# =========================================================
+
 async def admin_cmd(
-    update,
-    context
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
 ):
 
     if not is_admin(
@@ -506,7 +516,7 @@ async def admin_cmd(
     ):
 
         await update.message.reply_text(
-            "دسترسی مجاز نیست."
+            "⛔ دسترسی مجاز نیست."
         )
 
         return
@@ -514,110 +524,9 @@ async def admin_cmd(
     await update.message.reply_text(
         "🔐 پنل مدیریت",
         reply_markup=admin_menu()
-    )
-
-
-async def rates(
-    update,
-    context
-):
-
-    await update.callback_query.answer()
-
-    await update.callback_query.edit_message_text(
-
-        f"📊 نرخ فعلی\n\n"
-
-        f"🟢 خرید از مشتری: "
-        f"{money(float(setting('buy_rate')))}\n"
-
-        f"🔴 فروش به مشتری: "
-        f"{money(float(setting('sell_rate')))}",
-
-        reply_markup=user_menu()
-    )
-
-
-async def profile(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    r = user_row(
-        q.from_user.id
-    )
-
-    await q.edit_message_text(
-
-        f"👤 پروفایل\n\n"
-
-        f"ID: {q.from_user.id}\n"
-
-        f"نام: "
-        f"{r['first_name'] if r else ''}\n"
-
-        f"یوزرنیم: "
-        f"@{r['username'] if r and r['username'] else 'ندارد'}\n"
-
-        f"شماره: "
-        f"{r['phone'] if r and r['phone'] else 'ثبت نشده'}",
-
-        reply_markup=user_menu()
-    )
-
-
-async def myorders(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    c = db()
-
-    rows = c.execute(
-        """
-        SELECT *
-        FROM orders
-        WHERE tg_id=?
-        ORDER BY id DESC
-        LIMIT 10
-        """,
-        (q.from_user.id,)
-    ).fetchall()
-
-    c.close()
-
-    if not rows:
-
-        text = "📦 هنوز سفارشی ثبت نکرده‌اید."
-
-    else:
-
-        text = (
-            "📦 آخرین سفارش‌ها:\n\n"
-            +
-            "\n".join(
-                f"#{r['id']} | "
-                f"{'خرید' if r['side']=='buy' else 'فروش'} | "
-                f"{r['usdt']:g} USDT | "
-                f"{r['total']:,.2f} | "
-                f"{r['status']}"
-                for r in rows
-            )
-        )
-
-    await q.edit_message_text(
-        text,
-        reply_markup=user_menu()
-    )
-
+        # =========================================================
+# CREATE ORDER
+# =========================================================
 
 async def new_order(
     update,
@@ -625,17 +534,36 @@ async def new_order(
     side
 ):
 
-    q = update.callback_query
+    query = update.callback_query
 
-    await q.answer()
+    await query.answer()
 
-    rate = float(
-        setting(
-            "sell_rate"
-            if side == "buy"
-            else "buy_rate"
+    if setting("maintenance") == "1":
+
+        await query.edit_message_text(
+            "🔧 ربات موقتاً در حالت تعمیرات است.",
+            reply_markup=user_menu()
         )
-    )
+
+        return
+
+    if side == "buy":
+
+        rate = float(
+            setting("sell_rate")
+        )
+
+        title = "🟢 خرید تتر"
+
+    else:
+
+        rate = float(
+            setting("buy_rate")
+        )
+
+        title = "🔴 فروش تتر"
+
+    context.user_data.clear()
 
     context.user_data["state"] = (
         "order_amount"
@@ -645,17 +573,21 @@ async def new_order(
 
     context.user_data["rate"] = rate
 
-    await q.edit_message_text(
+    await query.edit_message_text(
 
-        f"{'🟢 خرید' if side=='buy' else '🔴 فروش'} تتر\n"
-
-        f"نرخ محاسبه: {money(rate)}\n\n"
-
-        "مقدار USDT را فقط به عدد بفرستید:"
+        f"{title}\n\n"
+        f"💵 نرخ فعلی: {money(rate)}\n\n"
+        "مقدار USDT را وارد کنید.\n\n"
+        "مثال:\n"
+        "100"
     )
 
 
-async def create_order_from_amount(
+# =========================================================
+# SAVE ORDER
+# =========================================================
+
+async def create_order(
     update,
     context
 ):
@@ -668,16 +600,15 @@ async def create_order_from_amount(
             .strip()
         )
 
-        if (
-            amount <= 0
-            or amount > 100000000
-        ):
+        if amount <= 0:
+
             raise ValueError
 
-    except:
+    except ValueError:
 
         await update.message.reply_text(
-            "لطفاً یک مقدار عددی معتبر وارد کنید."
+            "❌ لطفاً مقدار معتبر وارد کنید.\n"
+            "مثال: 100"
         )
 
         return
@@ -693,15 +624,30 @@ async def create_order_from_amount(
         )
     )
 
+    if side not in (
+        "buy",
+        "sell"
+    ) or rate <= 0:
+
+        context.user_data.clear()
+
+        await update.message.reply_text(
+            "❌ اطلاعات سفارش منقضی شده است.",
+            reply_markup=user_menu()
+        )
+
+        return
+
     total = amount * rate
 
     with db_lock:
 
-        c = db()
+        conn = db()
 
-        c.execute(
+        cur = conn.execute(
             """
-            INSERT INTO orders(
+            INSERT INTO orders
+            (
                 tg_id,
                 side,
                 usdt,
@@ -711,7 +657,7 @@ async def create_order_from_amount(
                 created_at,
                 updated_at
             )
-            VALUES(?,?,?,?,?,?,?,?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 update.effective_user.id,
@@ -725,29 +671,32 @@ async def create_order_from_amount(
             )
         )
 
-        oid = c.execute(
-            "SELECT last_insert_rowid()"
-        ).fetchone()[0]
+        order_id = cur.lastrowid
 
-        c.commit()
-        c.close()
+        conn.commit()
+
+        conn.close()
+
+    if side == "buy":
+
+        side_text = "خرید"
+
+    else:
+
+        side_text = "فروش"
 
     context.user_data.clear()
 
     await update.message.reply_text(
 
-        f"✅ سفارش #{oid} ثبت شد.\n\n"
+        f"✅ سفارش #{order_id} ثبت شد.\n\n"
 
-        f"نوع: "
-        f"{'خرید' if side=='buy' else 'فروش'}\n"
+        f"📌 نوع: {side_text}\n"
+        f"💵 مقدار: {amount:g} USDT\n"
+        f"📊 نرخ: {money(rate)}\n"
+        f"💰 مبلغ: {money(total)}\n\n"
 
-        f"مقدار: {amount:g} USDT\n"
-
-        f"نرخ: {money(rate)}\n"
-
-        f"مبلغ: {money(total)}\n\n"
-
-        "مدیریت پس از بررسی سفارش با شما تماس می‌گیرد.",
+        "⏳ سفارش شما برای مدیریت ارسال شد.",
 
         reply_markup=user_menu()
     )
@@ -756,127 +705,395 @@ async def create_order_from_amount(
 
         context,
 
-        f"🔔 سفارش جدید #{oid}\n"
-
-        f"کاربر: "
-        f"{update.effective_user.id}\n"
-
-        f"نوع: {side}\n"
-
-        f"مقدار: {amount:g} USDT\n"
-
-        f"مبلغ: {money(total)}"
+        "🔔 سفارش جدید\n\n"
+        f"🆔 شماره سفارش: #{order_id}\n"
+        f"👤 کاربر: {update.effective_user.id}\n"
+        f"📌 نوع: {side_text}\n"
+        f"💵 مقدار: {amount:g} USDT\n"
+        f"💰 مبلغ: {money(total)}"
     )
 
+
+# =========================================================
+# RATES
+# =========================================================
+
+async def rates(
+    update,
+    context
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    await query.edit_message_text(
+
+        "📊 نرخ‌های فعلی\n\n"
+
+        f"🟢 نرخ خرید: "
+        f"{money(setting('buy_rate'))}\n\n"
+
+        f"🔴 نرخ فروش: "
+        f"{money(setting('sell_rate'))}\n\n"
+
+        "ℹ️ نرخ‌ها توسط مدیریت تنظیم می‌شوند.",
+
+        reply_markup=user_menu()
+    )
+
+
+# =========================================================
+# PROFILE
+# =========================================================
+
+async def profile(
+    update,
+    context
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    conn = db()
+
+    row = conn.execute(
+        """
+        SELECT *
+        FROM users
+        WHERE tg_id = ?
+        """,
+        (query.from_user.id,)
+    ).fetchone()
+
+    conn.close()
+
+    if row:
+
+        name = (
+            row["first_name"]
+            or "ثبت نشده"
+        )
+
+        if row["username"]:
+
+            username = (
+                "@" +
+                row["username"]
+            )
+
+        else:
+
+            username = "ندارد"
+
+        phone = (
+            row["phone"]
+            or "ثبت نشده"
+        )
+
+    else:
+
+        name = (
+            query.from_user.first_name
+            or "ثبت نشده"
+        )
+
+        username = "ندارد"
+
+        phone = "ثبت نشده"
+
+    await query.edit_message_text(
+
+        "👤 پروفایل شما\n\n"
+
+        f"🆔 Telegram ID: "
+        f"{query.from_user.id}\n\n"
+
+        f"👤 نام: {name}\n"
+
+        f"📱 یوزرنیم: "
+        f"{username}\n"
+
+        f"☎️ شماره: {phone}",
+
+        reply_markup=user_menu()
+    )
+
+
+# =========================================================
+# MY ORDERS
+# =========================================================
+
+async def myorders(
+    update,
+    context
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    conn = db()
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM orders
+        WHERE tg_id = ?
+        ORDER BY id DESC
+        LIMIT 10
+        """,
+        (query.from_user.id,)
+    ).fetchall()
+
+    conn.close()
+
+    if not rows:
+
+        text = (
+            "📦 سفارش‌های من\n\n"
+            "هنوز سفارشی ثبت نکرده‌اید."
+        )
+
+    else:
+
+        lines = [
+            "📦 آخرین سفارش‌های شما:\n"
+        ]
+
+        for row in rows:
+
+            if row["side"] == "buy":
+
+                side = "🟢 خرید"
+
+            else:
+
+                side = "🔴 فروش"
+
+            lines.append(
+
+                f"#{row['id']} | {side}\n"
+                f"💵 مقدار: "
+                f"{row['usdt']:g} USDT\n"
+                f"💰 مبلغ: "
+                f"{row['total']:,.2f}\n"
+                f"📌 وضعیت: "
+                f"{row['status']}\n"
+                f"🕒 {row['created_at']}"
+
+            )
+
+        text = "\n\n".join(
+            lines
+        )
+
+    await query.edit_message_text(
+
+        text,
+
+        reply_markup=user_menu()
+    )
+
+
+# =========================================================
+# PAYMENT / RECEIPT
+# =========================================================
 
 async def payment(
     update,
     context
 ):
 
-    q = update.callback_query
+    query = update.callback_query
 
-    await q.answer()
+    await query.answer()
+
+    context.user_data.clear()
 
     context.user_data["state"] = (
         "payment_ref"
     )
 
-    await q.edit_message_text(
+    await query.edit_message_text(
 
-        "💳 پرداخت / رسید\n\n"
+        "💳 پرداخت / ارسال رسید\n\n"
 
-        "شناسه سفارش و در صورت نیاز "
-        "TXID/شماره رسید را در یک پیام بفرستید.\n"
+        "شماره سفارش و اطلاعات پرداخت "
+        "یا TXID را بفرستید.\n\n"
 
-        "مدیریت پس از بررسی وضعیت پرداخت "
-        "را تغییر می‌دهد."
+        "مثال:\n"
+
+        "ORDER 25\n"
+        "TXID: 123456789\n\n"
+
+        "اگر رسید تصویری دارید، "
+        "فعلاً شماره سفارش یا TXID را ارسال کنید."
     )
 
 
-async def save_payment_ref(
+# =========================================================
+# SAVE PAYMENT
+# =========================================================
+
+async def save_payment(
     update,
     context
 ):
 
-    ref = update.message.text.strip()
+    ref = (
+        update.message.text
+        .strip()
+    )
 
-    with db_lock:
+    conn = db()
 
-        c = db()
+    row = conn.execute(
+        """
+        SELECT id
+        FROM orders
+        WHERE tg_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (update.effective_user.id,)
+    ).fetchone()
 
-        r = c.execute(
+    if row:
+
+        conn.execute(
             """
-            SELECT id
-            FROM orders
-            WHERE tg_id=?
-            ORDER BY id DESC
-            LIMIT 1
+            UPDATE orders
+
+            SET
+                payment_ref = ?,
+                payment_status = ?,
+                updated_at = ?
+
+            WHERE id = ?
             """,
             (
-                update.effective_user.id,
+                ref,
+                "submitted",
+                now(),
+                row["id"]
             )
-        ).fetchone()
+        )
 
-        if r:
+        conn.commit()
 
-            c.execute(
-                """
-                UPDATE orders
-                SET payment_ref=?,
-                    payment_status='submitted',
-                    updated_at=?
-                WHERE id=?
-                """,
-                (
-                    ref,
-                    now(),
-                    r["id"]
-                )
-            )
+        order_id = row["id"]
 
-        c.commit()
-        c.close()
+    else:
+
+        order_id = None
+
+    conn.close()
 
     context.user_data.clear()
 
-    await update.message.reply_text(
-        "✅ رسید/شناسه پرداخت ثبت شد "
-        "و برای مدیریت ارسال گردید.",
+    if order_id:
+
+        await update.message.reply_text(
+
+            f"✅ رسید سفارش #{order_id} ثبت شد.\n\n"
+            "⏳ اطلاعات برای مدیریت ارسال شد.",
+
+            reply_markup=user_menu()
+        )
+
+    else:
+
+        await update.message.reply_text(
+
+            "⚠️ هنوز سفارشی برای این حساب پیدا نشد.",
+
+            reply_markup=user_menu()
+        )
+
+    await notify_admins(
+
+        context,
+
+        "💳 رسید جدید\n\n"
+        f"👤 کاربر: "
+        f"{update.effective_user.id}\n"
+        f"🧾 اطلاعات:\n{ref}"
+    )
+
+
+# =========================================================
+# SUPPORT
+# =========================================================
+
+async def support(
+    update,
+    context
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    await query.edit_message_text(
+
+        "📞 پشتیبانی\n\n"
+
+        f"👨‍💻 پشتیبانی:\n"
+        f"{setting('support')}\n\n"
+
+        "برای تماس با مدیریت از آیدی بالا استفاده کنید.",
+
         reply_markup=user_menu()
     )
 
-    await notify_admins(
-        context,
-        f"💳 رسید پرداخت از کاربر "
-        f"{update.effective_user.id}: {ref}"
-    )
 
+# =========================================================
+# AI ASSISTANT
+# =========================================================
 
 async def ai(
     update,
     context
 ):
 
-    q = update.callback_query
+    query = update.callback_query
 
-    await q.answer()
+    await query.answer()
 
     if setting("ai_enabled") != "1":
 
-        await q.edit_message_text(
-            "🤖 دستیار هوشمند فعلاً غیرفعال است.",
+        await query.edit_message_text(
+
+            "🤖 دستیار هوشمند "
+            "فعلاً خاموش است.",
+
             reply_markup=user_menu()
         )
 
         return
 
+    context.user_data.clear()
+
     context.user_data["state"] = "ai"
 
-    await q.edit_message_text(
-        "🤖 سوال خود را بفرستید."
+    await query.edit_message_text(
+
+        "🤖 دستیار هوشمند فعال شد.\n\n"
+
+        "سؤال خود را بنویسید.\n\n"
+
+        "برای مثال:\n"
+        "قیمت تتر چقدر است؟\n"
+        "چطور سفارش ثبت کنم؟\n"
+        "چطور رسید ارسال کنم؟"
     )
 
+
+# =========================================================
+# AI RESPONSE
+# =========================================================
 
 async def ai_reply(
     update,
@@ -890,12 +1107,16 @@ async def ai_reply(
 
         await update.message.reply_text(
 
-            "دستیار هوشمند در حال حاضر "
-            "تنظیم نشده است.\n"
+            "⚠️ دستیار هوشمند هنوز "
+            "تنظیم نشده است.\n\n"
 
-            "OPENAI_API_KEY را در "
-            ".env وارد کنید."
+            "در Render مقدار "
+            "OPENAI_API_KEY را وارد کنید.",
+
+            reply_markup=user_menu()
         )
+
+        context.user_data.clear()
 
         return
 
@@ -905,1079 +1126,69 @@ async def ai_reply(
             api_key=OPENAI_API_KEY
         )
 
-        r = client.responses.create(
+        prompt = (
+
+            "تو دستیار هوشمند یک ربات "
+            "خرید و فروش تتر هستی.\n"
+
+            "به زبان دری/فارسی ساده "
+            "و کوتاه جواب بده.\n"
+
+            "اطلاعات ساختگی درباره "
+            "موجودی، پرداخت یا سفارش "
+            "کاربر ایجاد نکن.\n\n"
+
+            f"نرخ خرید فعلی: "
+            f"{setting('buy_rate')}\n"
+
+            f"نرخ فروش فعلی: "
+            f"{setting('sell_rate')}\n\n"
+
+            f"سؤال کاربر:\n"
+            f"{update.message.text}"
+        )
+
+        response = client.responses.create(
 
             model=OPENAI_MODEL,
 
-            input=(
-
-                "تو دستیار یک ربات "
-                "خرید و فروش تتر هستی. "
-
-                "قیمت یا موجودی را حدس نزن. "
-
-                "نرخ فعلی خرید "
-                f"{setting('buy_rate')} "
-
-                "و فروش "
-                f"{setting('sell_rate')} "
-                "است. "
-
-                "به زبان دری/فارسی کوتاه "
-                "و دقیق پاسخ بده.\n\n"
-
-                + update.message.text
-            )
+            input=prompt
         )
 
         answer = getattr(
-            r,
+            response,
             "output_text",
             None
-        ) or "پاسخی دریافت نشد."
-
-        await update.message.reply_text(
-            answer
         )
 
-    except Exception:
+        if not answer:
+
+            answer = (
+                "⚠️ پاسخی دریافت نشد."
+            )
+
+        await update.message.reply_text(
+
+            answer,
+
+            reply_markup=user_menu()
+        )
+
+    except Exception as exc:
 
         log.exception(
-            "AI error"
+            "AI error: %s",
+            exc
         )
 
         await update.message.reply_text(
-            "فعلاً دستیار هوشمند پاسخ نداد. "
-            "بعداً دوباره امتحان کنید."
+
+            "⚠️ دستیار هوشمند "
+            "فعلاً پاسخ نمی‌دهد.\n\n"
+            "لطفاً دوباره تلاش کنید.",
+
+            reply_markup=user_menu()
         )
 
     context.user_data.clear()
-
-
-async def support(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    await q.edit_message_text(
-
-        f"📞 پشتیبانی: "
-        f"{setting('support')}",
-
-        reply_markup=user_menu()
     )
-
-
-def admin_stats():
-
-    c = db()
-
-    users = c.execute(
-        "SELECT COUNT(*) n FROM users"
-    ).fetchone()["n"]
-
-    orders = c.execute(
-        "SELECT COUNT(*) n FROM orders"
-    ).fetchone()["n"]
-
-    pending = c.execute(
-        """
-        SELECT COUNT(*) n
-        FROM orders
-        WHERE status='در انتظار تایید'
-        """
-    ).fetchone()["n"]
-
-    volume = c.execute(
-        """
-        SELECT COALESCE(SUM(total),0) n
-        FROM orders
-        WHERE status NOT IN ('رد شد','لغو شد')
-        """
-    ).fetchone()["n"]
-
-    c.close()
-
-    return (
-        users,
-        orders,
-        pending,
-        volume
-    )
-
-
-async def admin_dashboard(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    u, o, p, v = admin_stats()
-
-    await q.edit_message_text(
-
-        f"📊 داشبورد مدیریت\n\n"
-
-        f"👥 مشتریان: {u}\n"
-
-        f"📦 سفارش‌ها: {o}\n"
-
-        f"⏳ در انتظار: {p}\n"
-
-        f"💰 حجم ثبت‌شده: {v:,.2f}",
-
-        reply_markup=admin_menu()
-    )
-
-
-async def admin_orders(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    c = db()
-
-    rows = c.execute(
-        """
-        SELECT *
-        FROM orders
-        ORDER BY id DESC
-        LIMIT 15
-        """
-    ).fetchall()
-
-    c.close()
-
-    if not rows:
-
-        text = "📦 سفارشی وجود ندارد."
-
-    else:
-
-        text = (
-            "📦 سفارش‌های اخیر:\n\n"
-            +
-            "\n".join(
-                f"#{r['id']} | "
-                f"{r['tg_id']} | "
-                f"{r['side']} | "
-                f"{r['usdt']:g} | "
-                f"{r['total']:,.2f} | "
-                f"{r['status']}"
-                for r in rows
-            )
-        )
-
-    await q.edit_message_text(
-
-        text,
-
-        reply_markup=InlineKeyboardMarkup([
-
-            [
-                InlineKeyboardButton(
-                    "🔄 بروزرسانی",
-                    callback_data="adm_orders"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "⬅️ مدیریت",
-                    callback_data="adm_back"
-                )
-            ]
-
-        ])
-    )
-    async def admin_rates(
-    update,
-    context
-):
-    q = update.callback_query
-
-    await q.answer()
-
-    context.user_data["admin_state"] = "rates"
-
-    await q.edit_message_text(
-        f"💵 مدیریت نرخ‌ها\n\n"
-        f"🟢 نرخ خرید فعلی: {setting('buy_rate')}\n"
-        f"🔴 نرخ فروش فعلی: {setting('sell_rate')}\n\n"
-        "برای تغییر نرخ‌ها این‌طور بفرستید:\n\n"
-        "خرید 70\n"
-        "فروش 71"
-    )
-
-    await q.edit_message_text(
-
-        f"💵 نرخ فعلی\n"
-
-        f"خرید: {setting('buy_rate')}\n"
-
-        f"فروش: {setting('sell_rate')}\n\n"
-
-        "برای تغییر، این قالب را بفرستید:\n"
-
-        "خرید 70\n"
-        "فروش 71"
-    )
-
-
-async def admin_users(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    c = db()
-
-    rows = c.execute(
-        """
-        SELECT *
-        FROM users
-        ORDER BY created_at DESC
-        LIMIT 20
-        """
-    ).fetchall()
-
-    c.close()
-
-    if not rows:
-
-        text = "👥 مشتری‌ای وجود ندارد."
-
-    else:
-
-        text = (
-            "👥 مشتریان:\n\n"
-            +
-            "\n".join(
-
-                f"{r['tg_id']} | "
-                f"@{r['username'] or '-'} | "
-                f"{'🚫' if r['blocked'] else '✅'}"
-
-                for r in rows
-            )
-        )
-
-    await q.edit_message_text(
-
-        text,
-
-        reply_markup=InlineKeyboardMarkup([
-
-            [
-                InlineKeyboardButton(
-                    "🚫/✅ مدیریت مسدودسازی",
-                    callback_data="adm_block"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "⬅️ مدیریت",
-                    callback_data="adm_back"
-                )
-            ]
-
-        ])
-    )
-
-
-async def admin_block(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    context.user_data["admin_state"] = (
-        "block"
-    )
-
-    await q.edit_message_text(
-
-        "ID کاربر را برای مسدود کردن "
-        "یا آزاد کردن بفرستید.\n\n"
-
-        "مثال:\n"
-        "123456789"
-    )
-
-
-async def admin_payments(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    c = db()
-
-    rows = c.execute(
-        """
-        SELECT *
-        FROM orders
-        WHERE payment_ref IS NOT NULL
-        ORDER BY id DESC
-        LIMIT 15
-        """
-    ).fetchall()
-
-    c.close()
-
-    if not rows:
-
-        text = (
-            "💳 پرداخت ثبت‌شده‌ای وجود ندارد."
-        )
-
-    else:
-
-        text = (
-            "💳 پرداخت‌ها:\n\n"
-            +
-            "\n".join(
-
-                f"#{r['id']} | "
-                f"{r['tg_id']} | "
-                f"{r['payment_status']} | "
-                f"{r['payment_ref']}"
-
-                for r in rows
-            )
-        )
-
-    await q.edit_message_text(
-        text,
-        reply_markup=admin_menu()
-    )
-
-
-async def admin_reports(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    c = db()
-
-    today = datetime.now().strftime(
-        "%Y-%m-%d"
-    )
-
-    month = datetime.now().strftime(
-        "%Y-%m"
-    )
-
-    d = c.execute(
-        """
-        SELECT
-            COUNT(*) n,
-            COALESCE(SUM(total),0) s
-        FROM orders
-        WHERE substr(created_at,1,10)=?
-        """,
-        (today,)
-    ).fetchone()
-
-    m = c.execute(
-        """
-        SELECT
-            COUNT(*) n,
-            COALESCE(SUM(total),0) s
-        FROM orders
-        WHERE substr(created_at,1,7)=?
-        """,
-        (month,)
-    ).fetchone()
-
-    a = c.execute(
-        """
-        SELECT
-            COUNT(*) n,
-            COALESCE(SUM(total),0) s
-        FROM orders
-        """
-    ).fetchone()
-
-    c.close()
-
-    await q.edit_message_text(
-
-        f"📈 گزارش معاملات\n\n"
-
-        f"امروز: "
-        f"{d['n']} سفارش / "
-        f"{d['s']:,.2f}\n"
-
-        f"این ماه: "
-        f"{m['n']} سفارش / "
-        f"{m['s']:,.2f}\n"
-
-        f"کل: "
-        f"{a['n']} سفارش / "
-        f"{a['s']:,.2f}",
-
-        reply_markup=admin_menu()
-    )
-
-
-async def admin_broadcast(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    context.user_data["admin_state"] = (
-        "broadcast"
-    )
-
-    await q.edit_message_text(
-        "📢 متن پیام همگانی را بفرستید."
-    )
-
-
-async def admin_settings(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    await q.edit_message_text(
-
-        f"⚙️ تنظیمات\n\n"
-
-        f"نگهداری: "
-        f"{'روشن' if setting('maintenance')=='1' else 'خاموش'}\n"
-
-        f"AI: "
-        f"{'روشن' if setting('ai_enabled')=='1' else 'خاموش'}\n"
-
-        f"پشتیبانی: "
-        f"{setting('support')}\n\n"
-
-        "برای تغییر AI:\n"
-        "ai on / ai off\n\n"
-
-        "برای نگهداری:\n"
-        "maintenance on / maintenance off",
-
-        reply_markup=admin_menu()
-    )
-
-
-async def admin_logs(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    await q.answer()
-
-    c = db()
-
-    rows = c.execute(
-        """
-        SELECT *
-        FROM admin_logs
-        ORDER BY id DESC
-        LIMIT 20
-        """
-    ).fetchall()
-
-    c.close()
-
-    if rows:
-
-        logs = "\n".join(
-
-            f"{r['created_at']} | "
-            f"{r['admin_id']} | "
-            f"{r['action']} | "
-            f"{r['detail']}"
-
-            for r in rows
-        )
-
-    else:
-
-        logs = "خالی"
-
-    text = (
-        "🔐 آخرین لاگ‌ها:\n\n"
-        + logs
-    )
-
-    await q.edit_message_text(
-        text,
-        reply_markup=admin_menu()
-    )
-
-
-async def callbacks(
-    update,
-    context
-):
-
-    q = update.callback_query
-
-    if q.data == "buy":
-
-        return await new_order(
-            update,
-            context,
-            "buy"
-        )
-
-    if q.data == "sell":
-
-        return await new_order(
-            update,
-            context,
-            "sell"
-        )
-
-    if q.data == "rates":
-
-        return await rates(
-            update,
-            context
-        )
-
-    if q.data == "profile":
-
-        return await profile(
-            update,
-            context
-        )
-
-    if q.data == "myorders":
-
-        return await myorders(
-            update,
-            context
-        )
-
-    if q.data == "payment":
-
-        return await payment(
-            update,
-            context
-        )
-
-    if q.data == "ai":
-
-        return await ai(
-            update,
-            context
-        )
-
-    if q.data == "support":
-
-        return await support(
-            update,
-            context
-        )
-
-    if not is_admin(
-        q.from_user.id
-    ):
-
-        await q.answer(
-            "دسترسی مجاز نیست.",
-            show_alert=True
-        )
-
-        return
-
-    if q.data == "adm_dashboard":
-
-        return await admin_dashboard(
-            update,
-            context
-        )
-
-    if q.data == "adm_orders":
-
-        return await admin_orders(
-            update,
-            context
-        )
-
-    if q.data == "adm_users":
-
-        return await admin_users(
-            update,
-            context
-        )
-
-    if q.data == "adm_rates":
-
-        return await admin_rates(
-            update,
-            context
-        )
-
-    if q.data == "adm_payments":
-
-        return await admin_payments(
-            update,
-            context
-        )
-
-    if q.data == "adm_reports":
-
-        return await admin_reports(
-            update,
-            context
-        )
-
-    if q.data == "adm_broadcast":
-
-        return await admin_broadcast(
-            update,
-            context
-        )
-
-    if q.data == "adm_block":
-
-        return await admin_block(
-            update,
-            context
-        )
-
-    if q.data == "adm_settings":
-
-        return await admin_settings(
-            update,
-            context
-        )
-
-    if q.data == "adm_logs":
-
-        return await admin_logs(
-            update,
-            context
-        )
-
-    if q.data == "adm_back":
-
-        return await q.edit_message_text(
-            "🔐 پنل مدیریت",
-            reply_markup=admin_menu()
-        )
-
-
-async def text_handler(
-    update,
-    context
-):
-
-    ensure_user(
-        update.effective_user
-    )
-
-    if blocked(
-        update.effective_user.id
-    ):
-
-        await update.message.reply_text(
-            "حساب شما مسدود است."
-        )
-
-        return
-
-    state = context.user_data.get(
-        "state"
-    )
-
-    if state == "order_amount":
-
-        return await create_order_from_amount(
-            update,
-            context
-        )
-
-    if state == "payment_ref":
-
-        return await save_payment_ref(
-            update,
-            context
-        )
-
-    if state == "ai":
-
-        return await ai_reply(
-            update,
-            context
-        )
-
-    if is_admin(
-        update.effective_user.id
-    ):
-
-        astate = context.user_data.get(
-            "admin_state"
-        )
-
-        txt = update.message.text.strip()
-
-        if astate == "rates":
-
-            changed = []
-
-            for line in txt.splitlines():
-
-                p = line.split()
-
-                if len(p) == 2:
-
-                    try:
-
-                        val = float(p[1])
-
-                        if p[0] in (
-                            "خرید",
-                            "buy"
-                        ):
-
-                            set_setting(
-                                "buy_rate",
-                                val
-                            )
-
-                            changed.append(
-                                f"خرید={val}"
-                            )
-
-                        if p[0] in (
-                            "فروش",
-                            "sell"
-                        ):
-
-                            set_setting(
-                                "sell_rate",
-                                val
-                            )
-
-                            changed.append(
-                                f"فروش={val}"
-                            )
-
-                    except:
-
-                        pass
-
-            context.user_data.pop(
-                "admin_state",
-                None
-            )
-
-            log_admin(
-                update.effective_user.id,
-                "rates",
-                "; ".join(changed)
-            )
-
-            await update.message.reply_text(
-
-                "✅ نرخ‌ها بروزرسانی شد.\n"
-                +
-                "\n".join(changed),
-
-                reply_markup=admin_menu()
-            )
-
-            return
-
-        if astate == "block":
-
-            if txt.isdigit():
-
-                uid = int(txt)
-
-                r = user_row(uid)
-
-                if r:
-
-                    new = (
-                        0
-                        if r["blocked"]
-                        else 1
-                    )
-
-                    with db_lock:
-
-                        c = db()
-
-                        c.execute(
-                            """
-                            UPDATE users
-                            SET blocked=?
-                            WHERE tg_id=?
-                            """,
-                            (
-                                new,
-                                uid
-                            )
-                        )
-
-                        c.commit()
-                        c.close()
-
-                    log_admin(
-                        update.effective_user.id,
-                        "block_toggle",
-                        f"{uid} -> {new}"
-                    )
-
-                    await update.message.reply_text(
-
-                        f"✅ وضعیت کاربر {uid}: "
-                        f"{'مسدود' if new else 'آزاد'}",
-
-                        reply_markup=admin_menu()
-                    )
-
-                else:
-
-                    await update.message.reply_text(
-                        "کاربر پیدا نشد.",
-                        reply_markup=admin_menu()
-                    )
-
-            context.user_data.pop(
-                "admin_state",
-                None
-            )
-
-            return
-
-        if astate == "broadcast":
-
-            c = db()
-
-            ids = [
-                r["tg_id"]
-                for r in c.execute(
-                    """
-                    SELECT tg_id
-                    FROM users
-                    WHERE blocked=0
-                    """
-                ).fetchall()
-            ]
-
-            c.close()
-
-            ok = 0
-
-            for uid in ids:
-
-                try:
-
-                    await context.bot.send_message(
-                        uid,
-                        txt
-                    )
-
-                    ok += 1
-
-                except:
-
-                    pass
-
-            context.user_data.pop(
-                "admin_state",
-                None
-            )
-
-            log_admin(
-                update.effective_user.id,
-                "broadcast",
-                f"sent={ok}"
-            )
-
-            await update.message.reply_text(
-
-                f"📢 ارسال شد: {ok}",
-
-                reply_markup=admin_menu()
-            )
-
-            return
-
-        if txt.lower() in (
-            "ai on",
-            "ai off"
-        ):
-
-            set_setting(
-                "ai_enabled",
-                "1"
-                if txt.lower() == "ai on"
-                else "0"
-            )
-
-            log_admin(
-                update.effective_user.id,
-                "ai",
-                txt
-            )
-
-            await update.message.reply_text(
-                "✅ تنظیم شد.",
-                reply_markup=admin_menu()
-            )
-
-            return
-
-        if txt.lower() in (
-            "maintenance on",
-            "maintenance off"
-        ):
-
-            set_setting(
-                "maintenance",
-                "1"
-                if txt.lower() == "maintenance on"
-                else "0"
-            )
-
-            log_admin(
-                update.effective_user.id,
-                "maintenance",
-                txt
-            )
-
-            await update.message.reply_text(
-                "✅ تنظیم شد.",
-                reply_markup=admin_menu()
-            )
-
-            return
-
-    await update.message.reply_text(
-        "از منوی زیر استفاده کنید:",
-        reply_markup=user_menu()
-    )
-
-
-@app.get("/")
-def health():
-
-    return jsonify({
-
-        "status": "ok",
-
-        "service": "Bitcoin1996Bot",
-
-        "time": now()
-
-    })
-
-
-def run_web():
-
-    app.run(
-        host="0.0.0.0",
-        port=PORT,
-        debug=False,
-        use_reloader=False
-    )
-
-
-def main():
-
-    if not BOT_TOKEN:
-
-        raise RuntimeError(
-            "BOT_TOKEN is not set in .env"
-        )
-
-    init_db()
-
-    threading.Thread(
-        target=run_web,
-        daemon=True
-    ).start()
-
-    application = (
-        Application
-        .builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "admin",
-            admin_cmd
-        )
-    )
-
-    application.add_handler(
-        CallbackQueryHandler(
-            callbacks
-        )
-    )
-
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            text_handler
-        )
-    )
-
-    log.info(
-        "Bitcoin1996Bot started. "
-        "Admin IDs: %s",
-        sorted(ADMIN_IDS)
-    )
-
-    application.run_polling(
-        drop_pending_updates=True
-    )
-
-
-if __name__ == "__main__":
-
-    main()
