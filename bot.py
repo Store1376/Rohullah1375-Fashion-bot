@@ -1105,13 +1105,19 @@ async def admin_orders(
     update,
     context
 ):
-
     q = update.callback_query
 
     await q.answer()
 
-    context.user_data["admin_state"] = (
-        "rates"
+    context.user_data["admin_state"] = "rates"
+
+    await q.edit_message_text(
+        f"💵 مدیریت نرخ‌ها\n\n"
+        f"🟢 نرخ خرید فعلی: {setting('buy_rate')}\n"
+        f"🔴 نرخ فروش فعلی: {setting('sell_rate')}\n\n"
+        "برای تغییر نرخ‌ها این‌طور بفرستید:\n\n"
+        "خرید 70\n"
+        "فروش 71"
     )
 
     await q.edit_message_text(
