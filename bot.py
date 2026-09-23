@@ -5,13 +5,7 @@ import threading
 from datetime import datetime
 
 from flask import Flask, jsonify
-
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -28,7 +22,7 @@ except Exception:
 
 
 # =========================================================
-# SETTINGS
+# CONFIG
 # =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -77,7 +71,6 @@ log = logging.getLogger("Bitcoin1996Bot")
 # =========================================================
 
 app = Flask(__name__)
-
 db_lock = threading.Lock()
 
 
@@ -90,9 +83,7 @@ def db():
         DB_PATH,
         check_same_thread=False
     )
-
     conn.row_factory = sqlite3.Row
-
     return conn
 
 
@@ -103,9 +94,7 @@ def now():
 
 
 def init_db():
-
     with db_lock:
-
         conn = db()
 
         conn.executescript("""
@@ -156,93 +145,66 @@ def init_db():
         }
 
         for key, value in defaults.items():
-
             conn.execute(
                 """
-                INSERT OR IGNORE INTO settings
-                (key, value)
-                VALUES (?, ?)
+                INSERT OR IGNORE INTO settings(key,value)
+                VALUES(?,?)
                 """,
                 (key, value)
             )
 
         conn.commit()
-
         conn.close()
 
 
-# =========================================================
-# SETTINGS FUNCTIONS
-# =========================================================
-
 def setting(key):
-
     conn = db()
 
     row = conn.execute(
         """
         SELECT value
         FROM settings
-        WHERE key = ?
+        WHERE key=?
         """,
         (key,)
     ).fetchone()
 
     conn.close()
 
-    if row:
-        return row["value"]
-
-    return ""
+    return row["value"] if row else ""
 
 
 def set_setting(key, value):
-
     with db_lock:
-
         conn = db()
 
         conn.execute(
             """
-            INSERT INTO settings
-            (key, value)
-            VALUES (?, ?)
-
+            INSERT INTO settings(key,value)
+            VALUES(?,?)
             ON CONFLICT(key)
-            DO UPDATE SET value = excluded.value
+            DO UPDATE SET value=excluded.value
             """,
             (key, str(value))
         )
 
         conn.commit()
-
         conn.close()
 
 
-# =========================================================
-# ADMIN LOG
-# =========================================================
-
-def log_admin(
-    admin_id,
-    action,
-    detail=""
-):
-
+def log_admin(admin_id, action, detail=""):
     with db_lock:
-
         conn = db()
 
         conn.execute(
             """
-            INSERT INTO admin_logs
-            (
+            INSERT INTO admin_logs(
                 admin_id,
                 action,
                 detail,
                 created_at
             )
-            VALUES (?, ?, ?, ?)
+            VALUES(?,?,?,?)
             """,
             (
                 admin_id,
@@ -253,7 +215,6 @@ def log_admin(
         )
 
         conn.commit()
-
         conn.close()
 
 
@@ -262,36 +223,31 @@ def log_admin(
 # =========================================================
 
 def money(value):
-
     return f"{float(value):,.2f}"
 
 
 def is_admin(user_id):
-
     return user_id in ADMIN_IDS
 
 
 def ensure_user(user):
-
     with db_lock:
-
         conn = db()
 
         conn.execute(
             """
-            INSERT INTO users
-            (
+            INSERT INTO users(
                 tg_id,
                 username,
                 first_name,
                 created_at
             )
-            VALUES (?, ?, ?, ?)
+            VALUES(?,?,?,?)
 
             ON CONFLICT(tg_id)
             DO UPDATE SET
-                username = excluded.username,
-                first_name = excluded.first_name
+                username=excluded.username,
+                first_name=excluded.first_name
             """,
             (
                 user.id,
@@ -302,29 +258,24 @@ def ensure_user(user):
         )
 
         conn.commit()
-
         conn.close()
 
 
 def blocked(user_id):
-
     conn = db()
 
     row = conn.execute(
         """
         SELECT blocked
         FROM users
-        WHERE tg_id = ?
+        WHERE tg_id=?
         """,
         (user_id,)
     ).fetchone()
 
     conn.close()
 
-    if not row:
-        return False
-
-    return bool(row["blocked"])
+    return bool(row["blocked"]) if row else False
 
 
 # =========================================================
@@ -332,7 +283,6 @@ def blocked(user_id):
 # =========================================================
 
 def user_menu():
-
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
@@ -342,9 +292,8 @@ def user_menu():
             InlineKeyboardButton(
                 "🔴 فروش تتر",
                 callback_data="sell"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "📊 نرخ‌ها",
@@ -353,9 +302,8 @@ def user_menu():
             InlineKeyboardButton(
                 "📦 سفارش‌های من",
                 callback_data="myorders"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "💳 پرداخت / رسید",
@@ -364,9 +312,8 @@ def user_menu():
             InlineKeyboardButton(
                 "👤 پروفایل",
                 callback_data="profile"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "🤖 دستیار هوشمند",
@@ -375,8 +322,8 @@ def user_menu():
             InlineKeyboardButton(
                 "📞 پشتیبانی",
                 callback_data="support"
-            ),
-        ],
+            )
+        ]
     ])
 
 
@@ -385,7 +332,6 @@ def user_menu():
 # =========================================================
 
 def admin_menu():
-
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
@@ -395,9 +341,8 @@ def admin_menu():
             InlineKeyboardButton(
                 "📦 سفارش‌ها",
                 callback_data="adm_orders"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "👥 مشتریان",
@@ -406,9 +351,8 @@ def admin_menu():
             InlineKeyboardButton(
                 "💵 نرخ‌ها",
                 callback_data="adm_rates"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "💳 پرداخت‌ها",
@@ -417,20 +361,18 @@ def admin_menu():
             InlineKeyboardButton(
                 "📈 گزارش‌ها",
                 callback_data="adm_reports"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "📢 پیام همگانی",
                 callback_data="adm_broadcast"
             ),
             InlineKeyboardButton(
-                "🚫 مسدود/آزاد",
+                "🚫 مسدود / آزاد",
                 callback_data="adm_block"
-            ),
+            )
         ],
-
         [
             InlineKeyboardButton(
                 "⚙️ تنظیمات",
@@ -439,31 +381,23 @@ def admin_menu():
             InlineKeyboardButton(
                 "🔐 لاگ امنیتی",
                 callback_data="adm_logs"
-            ),
-        ],
+            )
+        ]
     ])
 
 
 # =========================================================
-# NOTIFY ADMINS
+# ADMIN NOTIFICATION
 # =========================================================
 
-async def notify_admins(
-    context,
-    text
-):
-
+async def notify_admins(context, text):
     for admin_id in ADMIN_IDS:
-
         try:
-
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=text
             )
-
         except Exception as exc:
-
             log.warning(
                 "Admin notification failed: %s",
                 exc
@@ -474,29 +408,21 @@ async def notify_admins(
 # START
 # =========================================================
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def start(update, context):
     user = update.effective_user
 
     ensure_user(user)
 
     if blocked(user.id):
-
         await update.message.reply_text(
             "🚫 حساب شما توسط مدیریت مسدود شده است."
         )
-
         return
 
     await update.message.reply_text(
         "💰 به ربات خرید و فروش تتر خوش آمدید.\n\n"
-        f"🟢 نرخ خرید: "
-        f"{money(setting('buy_rate'))}\n"
-        f"🔴 نرخ فروش: "
-        f"{money(setting('sell_rate'))}\n\n"
+        f"🟢 نرخ خرید: {money(setting('buy_rate'))}\n"
+        f"🔴 نرخ فروش: {money(setting('sell_rate'))}\n\n"
         "لطفاً گزینه مورد نظر را انتخاب کنید:",
         reply_markup=user_menu()
     )
@@ -506,94 +432,61 @@ async def start(
 # ADMIN COMMAND
 # =========================================================
 
-async def admin_cmd(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def admin_cmd(update, context):
+    user = update.effective_user
 
-    if not is_admin(
-        update.effective_user.id
-    ):
-
+    if not is_admin(user.id):
         await update.message.reply_text(
             "⛔ دسترسی مجاز نیست."
         )
-
         return
 
     await update.message.reply_text(
         "🔐 پنل مدیریت",
         reply_markup=admin_menu()
-        # =========================================================
-# CREATE ORDER
+    )
+
+
+# =========================================================
+# BUY / SELL
 # =========================================================
 
-async def new_order(
-    update,
-    context,
-    side
-):
-
+async def new_order(update, context, side):
     query = update.callback_query
 
     await query.answer()
 
     if setting("maintenance") == "1":
-
         await query.edit_message_text(
             "🔧 ربات موقتاً در حالت تعمیرات است.",
             reply_markup=user_menu()
         )
-
         return
 
     if side == "buy":
-
-        rate = float(
-            setting("sell_rate")
-        )
-
+        rate = float(setting("sell_rate"))
         title = "🟢 خرید تتر"
-
     else:
-
-        rate = float(
-            setting("buy_rate")
-        )
-
+        rate = float(setting("buy_rate"))
         title = "🔴 فروش تتر"
 
     context.user_data.clear()
 
-    context.user_data["state"] = (
-        "order_amount"
-    )
-
+    context.user_data["state"] = "order_amount"
     context.user_data["side"] = side
-
     context.user_data["rate"] = rate
 
     await query.edit_message_text(
-
         f"{title}\n\n"
         f"💵 نرخ فعلی: {money(rate)}\n\n"
-        "مقدار USDT را وارد کنید.\n\n"
+        "مقدار USDT را وارد کنید.\n"
         "مثال:\n"
         "100"
     )
 
 
-# =========================================================
-# SAVE ORDER
-# =========================================================
-
-async def create_order(
-    update,
-    context
-):
-
+async def create_order(update, context):
     try:
-
         amount = float(
             update.message.text
             .replace(",", "")
@@ -601,53 +494,37 @@ async def create_order(
         )
 
         if amount <= 0:
-
             raise ValueError
 
     except ValueError:
-
         await update.message.reply_text(
             "❌ لطفاً مقدار معتبر وارد کنید.\n"
             "مثال: 100"
         )
-
         return
 
-    side = context.user_data.get(
-        "side"
-    )
-
+    side = context.user_data.get("side")
     rate = float(
-        context.user_data.get(
-            "rate",
-            0
-        )
+        context.user_data.get("rate", 0)
     )
 
-    if side not in (
-        "buy",
-        "sell"
-    ) or rate <= 0:
-
+    if side not in ("buy", "sell") or rate <= 0:
         context.user_data.clear()
 
         await update.message.reply_text(
             "❌ اطلاعات سفارش منقضی شده است.",
             reply_markup=user_menu()
         )
-
         return
 
     total = amount * rate
 
     with db_lock:
-
         conn = db()
 
         cur = conn.execute(
             """
-            INSERT INTO orders
-            (
+            INSERT INTO orders(
                 tg_id,
                 side,
                 usdt,
@@ -657,7 +534,7 @@ async def create_order(
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?,?,?,?,?,?,?,?)
             """,
             (
                 update.effective_user.id,
@@ -674,39 +551,30 @@ async def create_order(
         order_id = cur.lastrowid
 
         conn.commit()
-
         conn.close()
 
-    if side == "buy":
-
-        side_text = "خرید"
-
-    else:
-
-        side_text = "فروش"
+    side_text = (
+        "خرید"
+        if side == "buy"
+        else "فروش"
+    )
 
     context.user_data.clear()
 
     await update.message.reply_text(
-
         f"✅ سفارش #{order_id} ثبت شد.\n\n"
-
         f"📌 نوع: {side_text}\n"
         f"💵 مقدار: {amount:g} USDT\n"
         f"📊 نرخ: {money(rate)}\n"
         f"💰 مبلغ: {money(total)}\n\n"
-
-        "⏳ سفارش شما برای مدیریت ارسال شد.",
-
+        "⏳ سفارش برای مدیریت ارسال شد.",
         reply_markup=user_menu()
     )
 
     await notify_admins(
-
         context,
-
         "🔔 سفارش جدید\n\n"
-        f"🆔 شماره سفارش: #{order_id}\n"
+        f"🆔 سفارش: #{order_id}\n"
         f"👤 کاربر: {update.effective_user.id}\n"
         f"📌 نوع: {side_text}\n"
         f"💵 مقدار: {amount:g} USDT\n"
@@ -718,27 +586,16 @@ async def create_order(
 # RATES
 # =========================================================
 
-async def rates(
-    update,
-    context
-):
-
+async def rates(update, context):
     query = update.callback_query
 
     await query.answer()
 
     await query.edit_message_text(
-
         "📊 نرخ‌های فعلی\n\n"
-
-        f"🟢 نرخ خرید: "
-        f"{money(setting('buy_rate'))}\n\n"
-
-        f"🔴 نرخ فروش: "
-        f"{money(setting('sell_rate'))}\n\n"
-
+        f"🟢 نرخ خرید: {money(setting('buy_rate'))}\n"
+        f"🔴 نرخ فروش: {money(setting('sell_rate'))}\n\n"
         "ℹ️ نرخ‌ها توسط مدیریت تنظیم می‌شوند.",
-
         reply_markup=user_menu()
     )
 
@@ -747,11 +604,7 @@ async def rates(
 # PROFILE
 # =========================================================
 
-async def profile(
-    update,
-    context
-):
-
+async def profile(update, context):
     query = update.callback_query
 
     await query.answer()
@@ -762,7 +615,7 @@ async def profile(
         """
         SELECT *
         FROM users
-        WHERE tg_id = ?
+        WHERE tg_id=?
         """,
         (query.from_user.id,)
     ).fetchone()
@@ -770,53 +623,30 @@ async def profile(
     conn.close()
 
     if row:
+        name = row["first_name"] or "ثبت نشده"
 
-        name = (
-            row["first_name"]
-            or "ثبت نشده"
+        username = (
+            "@" + row["username"]
+            if row["username"]
+            else "ندارد"
         )
 
-        if row["username"]:
-
-            username = (
-                "@" +
-                row["username"]
-            )
-
-        else:
-
-            username = "ندارد"
-
-        phone = (
-            row["phone"]
-            or "ثبت نشده"
-        )
+        phone = row["phone"] or "ثبت نشده"
 
     else:
-
         name = (
             query.from_user.first_name
             or "ثبت نشده"
         )
-
         username = "ندارد"
-
         phone = "ثبت نشده"
 
     await query.edit_message_text(
-
-        "👤 پروفایل شما\n\n"
-
-        f"🆔 Telegram ID: "
-        f"{query.from_user.id}\n\n"
-
+        "👤 پروفایل\n\n"
+        f"🆔 ID: {query.from_user.id}\n"
         f"👤 نام: {name}\n"
-
-        f"📱 یوزرنیم: "
-        f"{username}\n"
-
+        f"📱 یوزرنیم: {username}\n"
         f"☎️ شماره: {phone}",
-
         reply_markup=user_menu()
     )
 
@@ -825,11 +655,7 @@ async def profile(
 # MY ORDERS
 # =========================================================
 
-async def myorders(
-    update,
-    context
-):
-
+async def myorders(update, context):
     query = update.callback_query
 
     await query.answer()
@@ -840,7 +666,7 @@ async def myorders(
         """
         SELECT *
         FROM orders
-        WHERE tg_id = ?
+        WHERE tg_id=?
         ORDER BY id DESC
         LIMIT 10
         """,
@@ -850,102 +676,60 @@ async def myorders(
     conn.close()
 
     if not rows:
-
         text = (
             "📦 سفارش‌های من\n\n"
             "هنوز سفارشی ثبت نکرده‌اید."
         )
-
     else:
-
-        lines = [
-            "📦 آخرین سفارش‌های شما:\n"
-        ]
+        lines = ["📦 سفارش‌های شما:\n"]
 
         for row in rows:
-
-            if row["side"] == "buy":
-
-                side = "🟢 خرید"
-
-            else:
-
-                side = "🔴 فروش"
-
-            lines.append(
-
-                f"#{row['id']} | {side}\n"
-                f"💵 مقدار: "
-                f"{row['usdt']:g} USDT\n"
-                f"💰 مبلغ: "
-                f"{row['total']:,.2f}\n"
-                f"📌 وضعیت: "
-                f"{row['status']}\n"
-                f"🕒 {row['created_at']}"
-
+            side = (
+                "🟢 خرید"
+                if row["side"] == "buy"
+                else "🔴 فروش"
             )
 
-        text = "\n\n".join(
-            lines
-        )
+            lines.append(
+                f"#{row['id']} | {side}\n"
+                f"💵 مقدار: {row['usdt']:g} USDT\n"
+                f"💰 مبلغ: {row['total']:,.2f}\n"
+                f"📌 وضعیت: {row['status']}\n"
+                f"🕒 {row['created_at']}"
+            )
+
+        text = "\n\n".join(lines)
 
     await query.edit_message_text(
-
         text,
-
         reply_markup=user_menu()
     )
 
 
 # =========================================================
-# PAYMENT / RECEIPT
+# PAYMENT
 # =========================================================
 
-async def payment(
-    update,
-    context
-):
-
+async def payment(update, context):
     query = update.callback_query
 
     await query.answer()
 
     context.user_data.clear()
-
-    context.user_data["state"] = (
-        "payment_ref"
-    )
+    context.user_data["state"] = "payment_ref"
 
     await query.edit_message_text(
-
         "💳 پرداخت / ارسال رسید\n\n"
-
-        "شماره سفارش و اطلاعات پرداخت "
-        "یا TXID را بفرستید.\n\n"
-
+        "شماره سفارش و TXID یا اطلاعات رسید "
+        "را بفرستید.\n\n"
         "مثال:\n"
-
         "ORDER 25\n"
-        "TXID: 123456789\n\n"
-
-        "اگر رسید تصویری دارید، "
-        "فعلاً شماره سفارش یا TXID را ارسال کنید."
+        "TXID: 123456789"
     )
 
 
-# =========================================================
-# SAVE PAYMENT
-# =========================================================
-
-async def save_payment(
-    update,
-    context
-):
-
-    ref = (
-        update.message.text
-        .strip()
-    )
+async def save_payment(update, context):
+    ref = update.message.text.strip()
 
     conn = db()
 
@@ -953,72 +737,57 @@ async def save_payment(
         """
         SELECT id
         FROM orders
-        WHERE tg_id = ?
+        WHERE tg_id=?
         ORDER BY id DESC
         LIMIT 1
         """,
         (update.effective_user.id,)
     ).fetchone()
 
+    order_id = None
+
     if row:
+        order_id = row["id"]
 
         conn.execute(
             """
             UPDATE orders
-
             SET
-                payment_ref = ?,
-                payment_status = ?,
-                updated_at = ?
-
-            WHERE id = ?
+                payment_ref=?,
+                payment_status=?,
+                updated_at=?
+            WHERE id=?
             """,
             (
                 ref,
                 "submitted",
                 now(),
-                row["id"]
+                order_id
             )
         )
 
         conn.commit()
-
-        order_id = row["id"]
-
-    else:
-
-        order_id = None
 
     conn.close()
 
     context.user_data.clear()
 
     if order_id:
-
         await update.message.reply_text(
-
             f"✅ رسید سفارش #{order_id} ثبت شد.\n\n"
-            "⏳ اطلاعات برای مدیریت ارسال شد.",
-
+            "⏳ برای مدیریت ارسال شد.",
             reply_markup=user_menu()
         )
-
     else:
-
         await update.message.reply_text(
-
-            "⚠️ هنوز سفارشی برای این حساب پیدا نشد.",
-
+            "⚠️ هنوز سفارشی برای حساب شما پیدا نشد.",
             reply_markup=user_menu()
         )
 
     await notify_admins(
-
         context,
-
         "💳 رسید جدید\n\n"
-        f"👤 کاربر: "
-        f"{update.effective_user.id}\n"
+        f"👤 کاربر: {update.effective_user.id}\n"
         f"🧾 اطلاعات:\n{ref}"
     )
 
@@ -1027,131 +796,72 @@ async def save_payment(
 # SUPPORT
 # =========================================================
 
-async def support(
-    update,
-    context
-):
-
+async def support(update, context):
     query = update.callback_query
 
     await query.answer()
 
     await query.edit_message_text(
-
         "📞 پشتیبانی\n\n"
-
-        f"👨‍💻 پشتیبانی:\n"
-        f"{setting('support')}\n\n"
-
-        "برای تماس با مدیریت از آیدی بالا استفاده کنید.",
-
+        f"👨‍💻 {setting('support')}",
         reply_markup=user_menu()
     )
 
 
 # =========================================================
-# AI ASSISTANT
+# AI
 # =========================================================
 
-async def ai(
-    update,
-    context
-):
-
+async def ai(update, context):
     query = update.callback_query
 
     await query.answer()
 
     if setting("ai_enabled") != "1":
-
         await query.edit_message_text(
-
-            "🤖 دستیار هوشمند "
-            "فعلاً خاموش است.",
-
+            "🤖 دستیار هوشمند فعلاً خاموش است.",
             reply_markup=user_menu()
         )
-
         return
 
     context.user_data.clear()
-
     context.user_data["state"] = "ai"
 
     await query.edit_message_text(
-
         "🤖 دستیار هوشمند فعال شد.\n\n"
-
-        "سؤال خود را بنویسید.\n\n"
-
-        "برای مثال:\n"
-        "قیمت تتر چقدر است؟\n"
-        "چطور سفارش ثبت کنم؟\n"
-        "چطور رسید ارسال کنم؟"
+        "سؤال خود را بفرستید."
     )
 
 
-# =========================================================
-# AI RESPONSE
-# =========================================================
-
-async def ai_reply(
-    update,
-    context
-):
-
-    if (
-        not OPENAI_API_KEY
-        or OpenAI is None
-    ):
-
+async def ai_reply(update, context):
+    if not OPENAI_API_KEY or OpenAI is None:
         await update.message.reply_text(
-
-            "⚠️ دستیار هوشمند هنوز "
-            "تنظیم نشده است.\n\n"
-
-            "در Render مقدار "
-            "OPENAI_API_KEY را وارد کنید.",
-
+            "⚠️ دستیار هوشمند تنظیم نشده است.\n\n"
+            "OPENAI_API_KEY را در Render وارد کنید.",
             reply_markup=user_menu()
         )
 
         context.user_data.clear()
-
         return
 
     try:
-
         client = OpenAI(
             api_key=OPENAI_API_KEY
         )
 
         prompt = (
-
             "تو دستیار هوشمند یک ربات "
             "خرید و فروش تتر هستی.\n"
-
-            "به زبان دری/فارسی ساده "
-            "و کوتاه جواب بده.\n"
-
-            "اطلاعات ساختگی درباره "
-            "موجودی، پرداخت یا سفارش "
-            "کاربر ایجاد نکن.\n\n"
-
-            f"نرخ خرید فعلی: "
-            f"{setting('buy_rate')}\n"
-
-            f"نرخ فروش فعلی: "
-            f"{setting('sell_rate')}\n\n"
-
-            f"سؤال کاربر:\n"
-            f"{update.message.text}"
+            "به زبان دری/فارسی ساده جواب بده.\n"
+            "اطلاعات ساختگی درباره موجودی، "
+            "پرداخت یا سفارش ایجاد نکن.\n\n"
+            f"نرخ خرید: {setting('buy_rate')}\n"
+            f"نرخ فروش: {setting('sell_rate')}\n\n"
+            f"سؤال کاربر:\n{update.message.text}"
         )
 
         response = client.responses.create(
-
             model=OPENAI_MODEL,
-
             input=prompt
         )
 
@@ -1162,33 +872,15 @@ async def ai_reply(
         )
 
         if not answer:
-
-            answer = (
-                "⚠️ پاسخی دریافت نشد."
-            )
+            answer = "⚠️ پاسخی دریافت نشد."
 
         await update.message.reply_text(
-
             answer,
-
             reply_markup=user_menu()
         )
 
-    except Exception as exc:
-
-        log.exception(
-            "AI error: %s",
-            exc
-        )
+    except Exception:
+        log.exception("AI error")
 
         await update.message.reply_text(
-
-            "⚠️ دستیار هوشمند "
-            "فعلاً پاسخ نمی‌دهد.\n\n"
-            "لطفاً دوباره تلاش کنید.",
-
-            reply_markup=user_menu()
-        )
-
-    context.user_data.clear()
-    )
+   
